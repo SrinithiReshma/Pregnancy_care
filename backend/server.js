@@ -902,20 +902,109 @@ app.post("/login", async (req, res) => {
 
 app.post("/book-appointment", verifyToken, async (req, res) => {
   try {
-    const { doctorId, appointmentDate, appointmentTime, consultationType, reason, patientEmail, patientPhone } = req.body;
+    const {
+      doctorId, appointmentDate, appointmentTime,
+      consultationType, reason,
+      patientEmail, patientPhone,
+      doctorEmail, doctorName,   // ← add these two fields from your frontend
+    } = req.body;
+ 
     const userId = req.user.userId;
-
-    let audioChannelName = null, audioToken = null, videoRoomUrl = null;
-
+ 
+    let audioChannelName = null;
+    let audioToken       = null;
+    let audioCallLink    = null;   // ← new: the full joinable URL
+    let videoRoomUrl     = null;
+ 
+    // ── AUDIO: generate token + call link + send emails ──────────────────────
     if (consultationType === "AUDIO") {
-      const channelName = `audio-${Math.random().toString(36).substring(2, 10)}`;
-      const uid = 0, role = RtcRole.PUBLISHER;
+      const channelName        = `audio-${Math.random().toString(36).substring(2, 10)}`;
+      const uid                = 0;
+      const role               = RtcRole.PUBLISHER;
       const privilegeExpiredTs = Math.floor(Date.now() / 1000) + 3600;
-      const token = RtcTokenBuilder.buildTokenWithUid(process.env.AGORA_APP_ID, process.env.AGORA_APP_CERTIFICATE, channelName, uid, role, privilegeExpiredTs);
+ 
+      const token = RtcTokenBuilder.buildTokenWithUid(
+        APP_ID,
+        APP_CERTIFICATE,
+        channelName,
+        uid,
+        role,
+        privilegeExpiredTs
+      );
+ 
       audioChannelName = channelName;
-      audioToken = token;
+      audioToken       = token;
+      audioCallLink    = `http://localhost:5173/join-call?channel=${encodeURIComponent(channelName)}&token=${encodeURIComponent(token)}`;
+ 
+      // ── Email to patient ──────────────────────────────────────────────────
+      await transporter.sendMail({
+        from:    process.env.MAIL_USER,
+        to:      patientEmail,
+        subject: "Your Audio Consultation Link — NurtureWell",
+        html: `
+          <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #f0e6f6;">
+            <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:28px 32px;text-align:center;">
+              <div style="font-size:48px;margin-bottom:8px;">📞</div>
+              <h1 style="color:#fff;margin:0;font-size:22px;">Audio Consultation Scheduled</h1>
+            </div>
+            <div style="padding:28px 32px;">
+              <p style="color:#333;font-size:15px;line-height:1.7;margin:0 0 16px;">Hello,</p>
+              <p style="color:#333;font-size:15px;line-height:1.7;margin:0 0 8px;">
+                Your audio consultation has been booked.
+              </p>
+              <table style="width:100%;margin:16px 0;font-size:14px;color:#555;">
+                <tr><td style="padding:6px 0;font-weight:600;width:120px;">Doctor</td><td>${doctorName || "Your Doctor"}</td></tr>
+                <tr><td style="padding:6px 0;font-weight:600;">Date</td><td>${appointmentDate}</td></tr>
+                <tr><td style="padding:6px 0;font-weight:600;">Time</td><td>${appointmentTime}</td></tr>
+              </table>
+              <div style="text-align:center;margin:24px 0;">
+                <a href="${audioCallLink}"
+                   style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px;display:inline-block;">
+                  🎧 Join Audio Call
+                </a>
+              </div>
+              <p style="color:#999;font-size:12px;text-align:center;">This link is valid for 1 hour from the time of booking.</p>
+            </div>
+          </div>
+        `,
+      });
+ 
+      // ── Email to doctor ───────────────────────────────────────────────────
+      if (doctorEmail) {
+        await transporter.sendMail({
+          from:    process.env.MAIL_USER,
+          to:      doctorEmail,
+          subject: `Patient Audio Consultation — ${patientEmail}`,
+          html: `
+            <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #f0e6f6;">
+              <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:28px 32px;text-align:center;">
+                <div style="font-size:48px;margin-bottom:8px;">📞</div>
+                <h1 style="color:#fff;margin:0;font-size:22px;">Incoming Audio Consultation</h1>
+              </div>
+              <div style="padding:28px 32px;">
+                <p style="color:#333;font-size:15px;margin:0 0 8px;">Hello <strong>${doctorName || "Doctor"}</strong>,</p>
+                <p style="color:#555;font-size:14px;margin:0 0 16px;">A patient has booked an audio consultation with you.</p>
+                <table style="width:100%;margin:16px 0;font-size:14px;color:#555;">
+                  <tr><td style="padding:6px 0;font-weight:600;width:120px;">Patient</td><td>${patientEmail}</td></tr>
+                  <tr><td style="padding:6px 0;font-weight:600;">Date</td><td>${appointmentDate}</td></tr>
+                  <tr><td style="padding:6px 0;font-weight:600;">Time</td><td>${appointmentTime}</td></tr>
+                  <tr><td style="padding:6px 0;font-weight:600;">Reason</td><td>${reason || "Not specified"}</td></tr>
+                </table>
+                <div style="text-align:center;margin:24px 0;">
+                  <a href="${audioCallLink}"
+                     style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px;display:inline-block;">
+                    🎧 Join Audio Call
+                  </a>
+                </div>
+                <p style="color:#999;font-size:12px;text-align:center;">This link is valid for 1 hour from the time of booking.</p>
+              </div>
+            </div>
+          `,
+        });
+      }
     }
-
+ 
+    // ── VIDEO: generate Whereby room ─────────────────────────────────────────
     if (consultationType === "VIDEO") {
       const expiryTime = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
       const response = await axios.post(
@@ -925,29 +1014,61 @@ app.post("/book-appointment", verifyToken, async (req, res) => {
       );
       videoRoomUrl = response.data.hostRoomUrl;
     }
-
-    const appointment = await databases.createDocument(DATABASE_ID, "appointments", ID.unique(), {
-      userId, doctorId, appointmentDate, appointmentTime, consultationType, reason,
-      status: "BOOKED", audioChannelName, audioToken, videoRoomUrl, patientEmail, patientPhone
-    });
-
-    await transporter.sendMail({
-      from: process.env.MAIL_USER,
-      to: patientEmail,
-      subject: "Appointment Confirmed",
-      text: `Your appointment has been booked.\n\nDate: ${appointmentDate}\nTime: ${appointmentTime}\nType: ${consultationType}\n${audioToken ? "Audio Channel: " + audioChannelName : ""}\n${videoRoomUrl ? "Video Link: " + videoRoomUrl : ""}`
-    });
-
+ 
+    // ── Save appointment to DB ────────────────────────────────────────────────
+    const appointment = await databases.createDocument(
+      DATABASE_ID,
+      "appointments",
+      ID.unique(),
+      {
+        userId,
+        doctorId,
+        appointmentDate,
+        appointmentTime,
+        consultationType,
+        reason,
+        status:           "BOOKED",
+        audioChannelName: audioChannelName || null,
+        audioToken:       audioToken       || null,
+        audioCallLink:    audioCallLink    || null,   // ← store the full link too
+        videoRoomUrl:     videoRoomUrl     || null,
+        patientEmail,
+        patientPhone,
+      }
+    );
+ 
+    // ── Confirmation email (VIDEO / IN-PERSON) — audio already handled above ─
+    if (consultationType !== "AUDIO") {
+      await transporter.sendMail({
+        from:    process.env.MAIL_USER,
+        to:      patientEmail,
+        subject: "Appointment Confirmed — NurtureWell",
+        text:    `Your appointment has been booked.\n\nDate: ${appointmentDate}\nTime: ${appointmentTime}\nType: ${consultationType}${videoRoomUrl ? `\nVideo Link: ${videoRoomUrl}` : ""}`,
+      });
+    }
+ 
+    // ── SMS ───────────────────────────────────────────────────────────────────
     try {
-      await vonage.sms.send({ to: patientPhone, from: "PregCare", text: `Your appointment is confirmed on ${appointmentDate} at ${appointmentTime}.` });
+      const smsText = consultationType === "AUDIO"
+        ? `Your audio consultation is on ${appointmentDate} at ${appointmentTime}. Check your email for the call link.`
+        : `Your appointment is confirmed on ${appointmentDate} at ${appointmentTime}.`;
+      await vonage.sms.send({ to: patientPhone, from: "NurtureWell", text: smsText });
     } catch (smsError) {
       console.error("SMS error:", smsError);
     }
-
-    res.json({ success: true, appointmentId: appointment.$id, audioChannelName, audioToken, videoRoomUrl });
+ 
+    res.json({
+      success:          true,
+      appointmentId:    appointment.$id,
+      audioChannelName,
+      audioToken,
+      audioCallLink,    // ← returned to frontend if needed
+      videoRoomUrl,
+    });
+ 
   } catch (error) {
     console.error("Booking error:", error);
-    res.status(500).json({ success: false });
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
